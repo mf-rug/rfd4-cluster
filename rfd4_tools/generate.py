@@ -289,23 +289,29 @@ def build_job_script(
         if cluster.python_module
         else ""
     )
-    vram_block = ""
-    vram_report = ""
+    # Diagnostics live in an EXIT trap, not in a line after the run.
+    # `cmd || rc=$?` would survive `set -e` on its own, but a trap also covers
+    # an abort from any OTHER line -- a failed `source`, a missing cache dir --
+    # which is exactly when the summary is worth having.
+    vram_start = ""
+    vram_kill = ""
+    vram_peak = ""
     if poll_vram:
         # Written to the job dir, NOT $TMPDIR: $TMPDIR is deleted when the job
         # ends, taking any diagnostic with it.
-        vram_block = (
+        vram_start = (
             "nvidia-smi --query-gpu=name,memory.total,driver_version "
             "--format=csv,noheader || true\n"
             "( while true; do nvidia-smi --query-gpu=memory.used "
             "--format=csv,noheader,nounits; sleep 5; done ) > vram.log 2>/dev/null &\n"
             "_poll=$!\n"
         )
-        vram_report = (
-            'kill $_poll 2>/dev/null || true\n'
-            'if [ -s vram.log ]; then\n'
-            '    echo "peak VRAM (MiB): $(sort -n vram.log | tail -1)"\n'
-            'fi\n'
+        vram_kill = '    kill $_poll 2>/dev/null || true\n'
+        # `|| echo unknown` because an empty or missing vram.log under
+        # `pipefail` otherwise makes the substitution itself the failure.
+        vram_peak = (
+            '    echo "peak VRAM (MiB): '
+            '$(sort -n vram.log 2>/dev/null | tail -1 || echo unknown)"\n'
         )
 
     return f"""#!/bin/bash
@@ -334,17 +340,20 @@ export DATA_PATH="{cluster.data_path}"
 mkdir -p "$HF_HOME" "$DATA_PATH"
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 
-{vram_block}
-_rc=0
+# Emitted on EVERY bash-controlled exit path, including a `set -e` abort --
+# which is the case where losing the diagnostics would hurt most.
+_cleanup() {{
+    _rc=$?
+{vram_kill}    echo "=== rfd4-generate exit=$_rc  elapsed=${{SECONDS}}s ==="
+{vram_peak}    # Never fails the job: a parser bug must not turn a good run into a
+    # confusing failure.
+    PYTHONPATH="$_job_dir" python3 -m rfd4_tools log "$_job_dir" || true
+}}
+trap _cleanup EXIT
+
+{vram_start}
 SECONDS=0
-{_rfd4_command(p)} || _rc=$?
-_gen_seconds=$SECONDS
-
-{vram_report}
-echo "=== rfd4-generate exit=$_rc  generation=${{_gen_seconds}}s ==="
-
-# Summarise results while the data is local. Never fails the job.
-PYTHONPATH="$_job_dir" python3 -m rfd4_tools log "$_job_dir" || true
-
-exit $_rc
+# Absolute path rather than the activated PATH: immune to activate not having
+# run and to any PATH ordering surprise on a misconfigured node.
+{cluster.venv_path}/bin/{_rfd4_command(p)}
 """

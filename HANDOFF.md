@@ -117,3 +117,13 @@ The config block this fills in is `clusters.<name>` in
 State plainly which numbers are measured and which are extrapolated. The
 generator prints that distinction to users and cannot do so if the config
 lies to it.
+
+## For whoever writes the next input parser
+
+Size the design by **token count, not stated length**, and test the parser
+against real contigs rather than trusting it. The first version of this one
+used a greedy chain-id pattern, so `A17-131` parsed as chain `A17` starting at
+residue `-131` — one residue instead of 115. A 235-token job was sized at 121
+and routed onto a MIG slice. Nothing errored; the number was simply wrong.
+`verify/test_spec.py` exists because of that, and an expandable range must
+size at its **upper** bound: a GPU tier is an OOM cliff, not a soft limit.

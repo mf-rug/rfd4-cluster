@@ -53,11 +53,16 @@ complementary, not competing.
 
 ## Install
 
-> **Known upstream breakage (2026-11-16).** `rfd4-proteina 0.0.3` does not work
-> with `atomworks 3.1.0`, which removed `to_cif_string` while RFD4 still
-> imports it — a fresh install fails at the entry point with an `ImportError`.
-> Install RFD4 itself with `atomworks==3.0.4` pinned until upstream fixes it.
-> This is about the *model's* environment, not this tool's.
+> **Known upstream breakage (2026-11-16), PyPI route only.** The published
+> `rfd4-proteina 0.0.3` wheel allows `atomworks<4`, but atomworks 3.1 changed
+> CIF IO and moved to Biotite 2's incompatible structure API, so RFD4 fails at
+> its entry point with `ImportError: cannot import name 'to_cif_string'`.
+> Upstream has already fixed this on main (`<3.1`); the fix is just unreleased.
+> Until the next wheel ships, install with
+> `"atomworks[ml,openbabel]>=3.0.4,<3.1"` alongside RFD4 — a range, not `==`,
+> so it matches upstream's intent and becomes a no-op on release. Installing
+> RFD4 from a clone of main needs none of this. This concerns the *model's*
+> environment, not this tool's.
 
 ```bash
 git clone https://github.com/mf-rug/rfd4-cluster.git

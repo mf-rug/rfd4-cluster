@@ -36,14 +36,13 @@ python3 -m venv "$VENV" && source "$VENV/bin/activate"
 # anything else is downloaded.
 python3 -m pip install "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
 
-# rfd4-proteina 0.0.3 is BROKEN against atomworks 3.1.0, which removed
-# to_cif_string while rfproteina/metrics/oracles/af3_oracle.py still imports
-# it. The failure is at the entry point, not subtle:
-#   ImportError: cannot import name 'to_cif_string' from
-#   'atomworks.io.utils.io_utils'
-# Installs before ~2026-11-15 resolved atomworks 3.0.4 and work by luck.
-# Pin it until upstream fixes the import.
-python3 -m pip install "rfd4-proteina[all-cuda13]" "atomworks==3.0.4"
+# The PyPI wheel for rfd4-proteina 0.0.3 requires atomworks<4, which lets
+# 3.1 in -- and 3.1 breaks RFD4 at import. Upstream has ALREADY tightened
+# this to <3.1 on main; the fix is simply unreleased (0.0.3 is still latest).
+# So constrain it yourself when installing from PyPI. This becomes a no-op
+# the moment the next wheel ships; do not use == or you will block 3.0.x
+# patch releases and diverge from upstream's intent.
+python3 -m pip install "rfd4-proteina[all-cuda13]" "atomworks[ml,openbabel]>=3.0.4,<3.1"
 python3 -m pip check
 python3 -c "import torch, rfproteina; print('torch', torch.__version__)"
 find "$VENV" -xdev | wc -l    # report this number
@@ -53,11 +52,18 @@ find "$VENV" -xdev | wc -l    # report this number
 
 These accumulate across clusters. Add to them.
 
-1. **`atomworks` must be pinned to 3.0.4.** See the install block above. This
-   is the one that will bite a fresh install today, on any platform, and it
-   fails at import rather than at run time. Verified on macOS 2026-11-16; a
-   venv built on the 13th resolved 3.0.4 and is unaffected, which is why it
-   went unnoticed.
+1. **atomworks 3.1 is an API generation boundary, not a stray deletion.**
+   It changed CIF IO *and* moved to Biotite 2's incompatible structure API.
+   The symptom today is `ImportError: cannot import name 'to_cif_string'
+   from 'atomworks.io.utils.io_utils'` at RFD4's entry point, but anything
+   reaching into atomworks' IO layer breaks on the same boundary — so expect
+   siblings of this failure, not just this one.
+
+   Affects the **PyPI install route only**: that wheel allows `atomworks<4`.
+   Installing from a clone of RFD4's main branch is unaffected, because main
+   already constrains it to `<3.1`. A venv built before 3.1 shipped resolved
+   3.0.4 and works by luck, which is why it went unnoticed on both our
+   existing installs.
 2. **The CUDA extra tracks the driver, not the card.** `all-cuda13` vs
    `all-cuda12` is decided by `nvidia-smi`'s CUDA version, not by whether the
    node has an A100 or an H100. Snellius runs driver 595.71.05 / CUDA 13.2 on

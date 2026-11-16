@@ -53,15 +53,20 @@ complementary, not competing.
 
 ## Install
 
-> **Known upstream breakage (2026-11-16), PyPI route only.** The published
-> `rfd4-proteina 0.0.3` wheel allows `atomworks<4`, but atomworks 3.1 changed
-> CIF IO and moved to Biotite 2's incompatible structure API, so RFD4 fails at
-> its entry point with `ImportError: cannot import name 'to_cif_string'`.
-> Upstream has already fixed this on main (`<3.1`); the fix is just unreleased.
-> Until the next wheel ships, install with
-> `"atomworks[ml,openbabel]>=3.0.4,<3.1"` alongside RFD4 — a range, not `==`,
-> so it matches upstream's intent and becomes a no-op on release. Installing
-> RFD4 from a clone of main needs none of this. This concerns the *model's*
+> **Known upstream breakage (2026-11-16).** RFD4 0.0.3's published wheel
+> allows `atomworks<4`, but atomworks 3.1 moved to Biotite 2's incompatible
+> structure API, so RFD4 fails at its entry point with `ImportError: cannot
+> import name 'to_cif_string'`. Upstream already fixed this on main (`<3.1`);
+> the fix is unreleased.
+>
+> Whether it bites you depends on platform and extras, not install date: on
+> Linux the CUDA extras pull `tmol`/`bionemo-ir`, which hard-pin
+> `biotite==1.6.0` and force atomworks back to 3.0.4. Those deps are
+> linux-gated, so **a Mac install from PyPI has nothing holding it back and
+> will break**, with or without extras. Installing from a clone of RFD4's main
+> branch is safe everywhere. When in doubt add
+> `"atomworks[ml,openbabel]>=3.0.4,<3.1"` — a range, not `==`, so it matches
+> upstream and becomes a no-op on release. This concerns the *model's*
 > environment, not this tool's.
 
 ```bash

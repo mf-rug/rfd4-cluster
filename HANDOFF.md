@@ -52,18 +52,33 @@ find "$VENV" -xdev | wc -l    # report this number
 
 These accumulate across clusters. Add to them.
 
-1. **atomworks 3.1 is an API generation boundary, not a stray deletion.**
-   It changed CIF IO *and* moved to Biotite 2's incompatible structure API.
-   The symptom today is `ImportError: cannot import name 'to_cif_string'
-   from 'atomworks.io.utils.io_utils'` at RFD4's entry point, but anything
-   reaching into atomworks' IO layer breaks on the same boundary — so expect
-   siblings of this failure, not just this one.
+1. **atomworks 3.1 is an API generation boundary, and which atomworks you
+   get depends on your PLATFORM AND EXTRAS, not on when you installed.**
+   atomworks 3.1 changed CIF IO and moved to Biotite 2's incompatible
+   structure API. RFD4 0.0.3's published wheel allows `atomworks<4`, so 3.1
+   is eligible — and the symptom is `ImportError: cannot import name
+   'to_cif_string' from 'atomworks.io.utils.io_utils'` at the entry point.
 
-   Affects the **PyPI install route only**: that wheel allows `atomworks<4`.
-   Installing from a clone of RFD4's main branch is unaffected, because main
-   already constrains it to `<3.1`. A venv built before 3.1 shipped resolved
-   3.0.4 and works by luck, which is why it went unnoticed on both our
-   existing installs.
+   What actually decides it (verified against PyPI metadata 2026-11-16):
+   atomworks 3.1.0 hard-pins `biotite==2.0.0`, 3.0.4 hard-pins
+   `biotite==1.6.0`. Both `tmol 0.2.0` and `bionemo-ir 0.2.1` hard-pin
+   `biotite==1.6.0`, which makes atomworks 3.1 unsatisfiable and forces pip
+   to backtrack to 3.0.4. But both are marked `sys_platform == 'linux'` in
+   RFD4's own dependencies. Therefore:
+
+   | Install | atomworks | |
+   |---|---|---|
+   | Linux + `[all-cuda12]` or `[all-cuda13]` | 3.0.4 | safe, incidentally |
+   | Linux, no extras | 3.1.x | **breaks** |
+   | macOS, any PyPI install | 3.1.x | **breaks** (the linux-gated pins are absent) |
+   | Any platform, from a clone of RFD4 main | 3.0.4 | safe (main says `<3.1`) |
+
+   So the cluster install is protected by its CUDA extra and the pin below is
+   belt-and-braces; a Mac install from PyPI is not protected at all. **"It
+   works for me" carries no information across install variants** — that is
+   the transferable lesson, and it will apply to the next dependency too.
+   atomworks 3.1.0 was released 2026-11-10, before our working installs, so
+   install date explains nothing.
 2. **The CUDA extra tracks the driver, not the card.** `all-cuda13` vs
    `all-cuda12` is decided by `nvidia-smi`'s CUDA version, not by whether the
    node has an A100 or an H100. Snellius runs driver 595.71.05 / CUDA 13.2 on

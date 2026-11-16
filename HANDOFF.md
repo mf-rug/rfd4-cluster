@@ -36,7 +36,14 @@ python3 -m venv "$VENV" && source "$VENV/bin/activate"
 # anything else is downloaded.
 python3 -m pip install "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
 
-python3 -m pip install "rfd4-proteina[all-cuda13]"
+# rfd4-proteina 0.0.3 is BROKEN against atomworks 3.1.0, which removed
+# to_cif_string while rfproteina/metrics/oracles/af3_oracle.py still imports
+# it. The failure is at the entry point, not subtle:
+#   ImportError: cannot import name 'to_cif_string' from
+#   'atomworks.io.utils.io_utils'
+# Installs before ~2026-11-15 resolved atomworks 3.0.4 and work by luck.
+# Pin it until upstream fixes the import.
+python3 -m pip install "rfd4-proteina[all-cuda13]" "atomworks==3.0.4"
 python3 -m pip check
 python3 -c "import torch, rfproteina; print('torch', torch.__version__)"
 find "$VENV" -xdev | wc -l    # report this number
@@ -46,32 +53,37 @@ find "$VENV" -xdev | wc -l    # report this number
 
 These accumulate across clusters. Add to them.
 
-1. **The CUDA extra tracks the driver, not the card.** `all-cuda13` vs
+1. **`atomworks` must be pinned to 3.0.4.** See the install block above. This
+   is the one that will bite a fresh install today, on any platform, and it
+   fails at import rather than at run time. Verified on macOS 2026-11-16; a
+   venv built on the 13th resolved 3.0.4 and is unaffected, which is why it
+   went unnoticed.
+2. **The CUDA extra tracks the driver, not the card.** `all-cuda13` vs
    `all-cuda12` is decided by `nvidia-smi`'s CUDA version, not by whether the
    node has an A100 or an H100. Snellius runs driver 595.71.05 / CUDA 13.2 on
    both, so `all-cuda13` is correct there — and it is the one that carries the
    BioIR runtime, so cuda12 is the degraded choice, not the safe one.
-2. **The pip bootstrap is not optional** on any module stack shipping pip
+3. **The pip bootstrap is not optional** on any module stack shipping pip
    older than 26.2.2. Check with `python3 -m pip -V` before and after.
-3. **Lmod year-stack first, on one line.** `module load 2024 Python/...`.
+4. **Lmod year-stack first, on one line.** `module load 2024 Python/...`.
    Without the `2024` you silently get a different Python from the 2023 stack.
-4. **`DATA_PATH` must be exported even if unused.** `configs/inference.yaml`
+5. **`DATA_PATH` must be exported even if unused.** `configs/inference.yaml`
    interpolates `${oc.env:DATA_PATH}` for the native checkpoint paths. A
    non-null `hf_ckpt_path` wins at load time, but Hydra still has to *resolve*
    the interpolation first, so an unset `DATA_PATH` fails the run before the
    model is reached.
-5. **`$TMPDIR` is deleted at job end.** Anything diagnostic written there is
+6. **`$TMPDIR` is deleted at job end.** Anything diagnostic written there is
    gone before you can read it. Write to the job dir.
-6. **QOS caps cores per GPU** and `sbatch` *rejects* a job that exceeds it
+7. **QOS caps cores per GPU** and `sbatch` *rejects* a job that exceeds it
    (`QOSMaxCpuPerJobLimit`). On Snellius: `gpu_a100` 18, `gpu_h100` 16,
    `gpu_mig` 9. Nodes are charged per GPU, so request the full allowance.
-7. **`uv` may not exist** and may have no module. Plain pip works (16:49
+8. **`uv` may not exist** and may have no module. Plain pip works (16:49
    against upstream's "~10 min" claim). Do not `curl | sh` an installer onto
    shared storage.
-8. **Inode budgets.** The venv is **82,862 files**. On a cluster that binds on
+9. **Inode budgets.** The venv is **82,862 files**. On a cluster that binds on
    file count rather than bytes — Habrók's `/scratch` is 512k soft — that is
    16 % of the budget before weights or outputs. Check before installing.
-9. **`hpcjob --jobs-dir` may not exist** on an older build. The generator
+10. **`hpcjob --jobs-dir` may not exist** on an older build. The generator
    probes `hpcjob submit --help` once and warns rather than silently filing
    jobs under another toolbox's directory.
 

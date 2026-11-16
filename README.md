@@ -53,6 +53,12 @@ complementary, not competing.
 
 ## Install
 
+> **Known upstream breakage (2026-11-16).** `rfd4-proteina 0.0.3` does not work
+> with `atomworks 3.1.0`, which removed `to_cif_string` while RFD4 still
+> imports it — a fresh install fails at the entry point with an `ImportError`.
+> Install RFD4 itself with `atomworks==3.0.4` pinned until upstream fixes it.
+> This is about the *model's* environment, not this tool's.
+
 ```bash
 git clone https://github.com/mf-rug/rfd4-cluster.git
 ln -s "$PWD/rfd4-cluster/rfd4-setup-job" ~/.local/bin/rfd4-setup-job

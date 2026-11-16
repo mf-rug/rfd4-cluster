@@ -1,0 +1,31 @@
+#!/bin/bash
+# Generate an RFD4-Proteina Slurm job directory.
+# Resolve the directory this script lives in (works even via a PATH symlink).
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+
+# PyYAML is the only third-party requirement. A system python3 often lacks it,
+# so fall back to an interpreter that has it rather than failing: first the
+# local RFD4 venv (which always does), then the active virtualenv.
+pick_python() {
+    for cand in "${PYTHON:-python3}" \
+                "${RFD4_VENV:+$RFD4_VENV/bin/python}" \
+                "${VIRTUAL_ENV:+$VIRTUAL_ENV/bin/python}"; do
+        [ -n "$cand" ] || continue
+        command -v "$cand" >/dev/null 2>&1 || [ -x "$cand" ] || continue
+        if "$cand" -c "import yaml" >/dev/null 2>&1; then
+            echo "$cand"
+            return 0
+        fi
+    done
+    return 1
+}
+
+PY="$(pick_python)" || {
+    echo "rfd4-setup-job: no python3 with PyYAML found." >&2
+    echo "  Install it (python3 -m pip install pyyaml), or set RFD4_VENV to a" >&2
+    echo "  local RFD4 install, or set PYTHON to a suitable interpreter." >&2
+    exit 2
+}
+
+PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+    exec "$PY" -c "from rfd4_tools.cli import main; raise SystemExit(main())" "$@"

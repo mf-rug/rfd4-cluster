@@ -226,21 +226,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"cluster: {clus.name}")
         print("\nGPU tiers (keyed on worst-case TOKEN count, not stated length):")
         for tier in clus.gpu_tiers:
-            label = (
-                f"measured at {tier['measured_at']} tokens"
-                if tier.get("measured_at")
-                else "EXTRAPOLATED"
-            )
+            if tier.get("measured_at"):
+                label = f"curve measured to {tier['measured_at']} tokens"
+            elif tier.get("fit_cap"):
+                label = f"fit extrapolated to this card (cap {tier['fit_cap']})"
+            else:
+                label = "EXTRAPOLATED"
             print(f"  <= {tier.get('max_tokens'):>5} tokens -> {tier.get('gpu_sbatch'):<16} "
                   f"mem {tier.get('mem'):<7} [{label}]")
         print("\nWall-time model:")
         print(f"  anchor            : {timing.ref_seconds_per_design:.0f}s per design "
               f"at {timing.ref_tokens} tokens / {timing.ref_steps} steps  [MEASURED]")
-        print(f"  token exponent    : {timing.token_exponent}  [ASSUMED from RFD3, not fitted]")
+        print(f"  token exponent    : {timing.token_exponent}  [MEASURED over 700-1200 tokens]")
         print(f"  model load        : {timing.load_seconds:.0f}s")
         print(f"  compile warm-up   : {timing.compile_warmup_seconds:.0f}s (only with --compile)")
         print(f"  safety factor     : {timing.safety_factor}")
-        print("\nOne measured point exists. Treat every tier cap as provisional.")
+        print("\nFrom a 9-point sweep (300-1200 residues). No OOM cliff was reached --")
+        print("the sweep ran out of range, not memory -- so each cap is that curve")
+        print("solved at 85% of the card's VRAM, not an observed limit. Below ~500")
+        print("tokens the run is overhead-dominated and the time model under-predicts.")
         return 0
 
     if not args.name:

@@ -62,18 +62,25 @@ clusters:
     # the generator passes `hpcjob submit --jobs-dir` to say so.
     jobs_dir: /projects/<PROJECT>/rfd4_jobs
     epilog_marker: ""
-    # ONE MEASURED POINT (2026-11-15): 216 residues (115 target + 101 designed),
-    # quickstart preset, 60 steps -> 2,657 MiB peak on an A100-40GB, 150 s.
-    # Everything else below is EXTRAPOLATED from that single point assuming the
-    # ~L^2 growth RFD3 showed. Run a size sweep before trusting the caps.
+    # MEASURED, from a 9-point sweep on Snellius (2026-11-16), 300-1200
+    # residues at nsteps=20:
+    #     peak_MiB = 2077 + 0.01039 * L^2      (max deviation 2.9%)
+    # Peak memory is independent of step count -- verified, 3,079 MiB at both
+    # 20 and 60 steps from two separate jobs -- so a cheap 20-step probe sizes
+    # a 60-step production run correctly.
     #
-    # max_tokens, not max_length: on RFD3, VRAM followed *token* count
-    # (residues + ligand atoms + extra chains), and keying tiers on stated
-    # design length was a trap we already hit once. Assume the same here.
+    # Caps below solve that curve at 85% of each card's VRAM, the same margin
+    # RFD3's measured tier sits at. No OOM cliff was actually reached: the
+    # sweep ran out of range at 1200 residues, not out of memory, so the caps
+    # are a fit extrapolated to the card rather than an observed limit.
+    #
+    # max_tokens, not max_length: VRAM follows *token* count (residues +
+    # ligand atoms + extra chains), and keying tiers on stated design length
+    # was a trap rfd3-cluster already hit once.
     gpu_tiers:
-      - {max_tokens: 400,  gpu_sbatch: a100_3g.20gb:1, mem: 48GB, extrapolated: true}
-      - {max_tokens: 900,  gpu_sbatch: a100:1,         mem: 64GB, measured_at: 216}
-      - {max_tokens: 1600, gpu_sbatch: h100:1,         mem: 96GB, extrapolated: true, warn: true}
+      - {max_tokens: 1150, gpu_sbatch: a100_3g.20gb:1, mem: 48GB, fit_cap: 1215}
+      - {max_tokens: 1700, gpu_sbatch: a100:1,         mem: 64GB, fit_cap: 1775, measured_at: 1200}
+      - {max_tokens: 2400, gpu_sbatch: h100:1,         mem: 96GB, fit_cap: 2549, warn: true}
     # cpus_per_gpu is a QOS CEILING: exceed it and sbatch rejects the job with
     # QOSMaxCpuPerJobLimit. Nodes are charged per GPU, so take the full
     # allowance -- asking for less saves nothing.
@@ -87,22 +94,23 @@ clusters:
   # 512k soft inode cap on /scratch -- before weights or outputs. Habrok binds
   # on file count, not bytes. Add a block here only if that budget changes.
 
-# Wall-time model. ONE measured point: 1 design, 216 tokens, 60 steps, no
-# torch.compile -> 150 s of generation on an A100.
+# Wall-time model, fitted to the same Snellius sweep (nsteps=20, batch 1):
+#   generation_seconds = ref_seconds_per_design * (tokens/ref_tokens)^1.73
+# The exponent is MEASURED over 700-1200 residues. Below ~500 residues the
+# run is dominated by fixed overhead rather than by size, so the model
+# under-predicts there; safety_factor and min_minutes absorb it.
 #
-# The shape below (linear in designs, ~quadratic in tokens) is carried over
-# from RFD3 and is NOT fitted for RFD4. safety_factor is correspondingly
-# generous. Replace this block once a size sweep exists.
+# Step scaling is very nearly linear but not exactly: 20 -> 60 steps measured
+# 2.6x, not 3x, because a fixed cost sits inside the generation phase.
 timing:
-  load_seconds: 120          # model load + HF cache check; measured ~90-150
-  ref_seconds_per_design: 150   # THE anchor: 1 design at ref_tokens/ref_steps
-  token_exponent: 2.0        # ASSUMED, not fitted
-  ref_tokens: 216            # the anchor above
-  ref_steps: 60
+  load_seconds: 120          # python start + HF cache check + model load
+  ref_seconds_per_design: 39 # MEASURED: 700 tokens, 20 steps, A100
+  token_exponent: 1.73       # MEASURED over 700-1200 tokens (was 2.0, assumed)
+  ref_tokens: 700
+  ref_steps: 20
   # torch.compile warm-up, paid once per job when compile_lengths is enabled.
-  # Costs minutes and only pays off across many designs.
   compile_warmup_seconds: 420
-  safety_factor: 2.5
+  safety_factor: 2.0         # lowered from 2.5 now that the curve is measured
   min_minutes: 15
 """
 
@@ -131,18 +139,18 @@ class Cluster:
 class Timing:
     """Wall-time cost model (see generate.estimate_seconds).
 
-    Only `ref_tokens`/`ref_steps` and the 150 s they map to are measured.
-    `token_exponent` is assumed from RFD3's behaviour, which is why
-    `safety_factor` is 2.5 rather than RFD3's 2.0.
+    All of it is measured now, from a 9-point Snellius sweep: the exponent
+    over 700-1200 residues, the anchor at 700. Below ~500 residues fixed
+    overhead dominates and the model under-predicts, which min_minutes covers.
     """
 
     load_seconds: float = 120.0
-    ref_seconds_per_design: float = 150.0
-    token_exponent: float = 2.0
-    ref_tokens: int = 216
-    ref_steps: int = 60
+    ref_seconds_per_design: float = 39.0
+    token_exponent: float = 1.73
+    ref_tokens: int = 700
+    ref_steps: int = 20
     compile_warmup_seconds: float = 420.0
-    safety_factor: float = 2.5
+    safety_factor: float = 2.0
     min_minutes: int = 15
 
 
@@ -243,12 +251,12 @@ def load(cluster_name: Optional[str] = None, path: Path = CONFIG_PATH):
     t = data.get("timing") or {}
     timing = Timing(
         load_seconds=float(t.get("load_seconds", 120)),
-        ref_seconds_per_design=float(t.get("ref_seconds_per_design", 150)),
-        token_exponent=float(t.get("token_exponent", 2.0)),
-        ref_tokens=int(t.get("ref_tokens", 216)),
-        ref_steps=int(t.get("ref_steps", 60)),
+        ref_seconds_per_design=float(t.get("ref_seconds_per_design", 39)),
+        token_exponent=float(t.get("token_exponent", 1.73)),
+        ref_tokens=int(t.get("ref_tokens", 700)),
+        ref_steps=int(t.get("ref_steps", 20)),
         compile_warmup_seconds=float(t.get("compile_warmup_seconds", 420)),
-        safety_factor=float(t.get("safety_factor", 2.5)),
+        safety_factor=float(t.get("safety_factor", 2.0)),
         min_minutes=int(t.get("min_minutes", 15)),
     )
     return cluster, timing

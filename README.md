@@ -112,22 +112,38 @@ still sizes it, validates it, stages its structures and wraps it.
 
 ## What is measured and what is not
 
-**One measured point exists**, from the Snellius install report (2026-11-15):
+A 9-point sweep on Snellius (300-1200 residues, 2026-11-16) gives the
+memory curve the tier table is built on:
 
-> 216 residues (115 target + 101 designed binder), quickstart preset, 60 steps
-> → **2,657 MiB peak VRAM** on an A100-40GB, **150 s** of generation.
+```
+peak_MiB = 2077 + 0.01039 * L^2        (max deviation 2.9%)
+```
 
-Everything else — the tier caps, the token exponent in the walltime model — is
-extrapolated from that one point using RFD3's scaling behaviour, and is
-labelled as such by `--show-model`. The `safety_factor` of 2.5 is carrying
-that uncertainty. **Treat every tier cap as provisional** until a size sweep
-replaces them.
+**No OOM cliff was reached.** The sweep ran out of range at 1200 residues,
+not out of memory, so each tier cap is that curve solved at 85% of the
+card's VRAM rather than an observed limit. `--show-model` says which tier
+the curve actually reaches and which are extrapolated to the card.
+
+Peak memory is **independent of step count** -- 3,079 MiB at both 20 and 60
+steps, from two separate jobs, confirmed on CUDA and MPS. So a cheap 20-step
+probe sizes a 60-step production run correctly. (`nsteps` has a floor of 20:
+`tail_steps` x `tail_step_multiplier`.)
+
+Generation time scales as **L^1.73** over 700-1200 residues, not the L^2 that
+RFD3 behaviour suggested. Below ~500 residues runs are dominated by fixed
+overhead rather than size, and the model under-predicts there; `min_minutes`
+covers it.
 
 Tiers are keyed on **token count, not stated design length**. On RFD3 the
-quantity that actually drove VRAM was tokens — residues plus ligand atoms plus
-extra chains — and keying tiers on length was a trap already hit once. The
+quantity that drove VRAM was tokens -- residues plus ligand atoms plus extra
+chains -- and keying tiers on length was a trap already hit once. The
 generator counts residues from the contig, which is a *lower bound* on tokens:
 for inputs carrying ligands or metals, pass `--max-tokens` explicitly.
+
+> Upgrading from an earlier version? `~/.config/rfd4-setup/config.yaml` is
+> only written when absent, so an existing config still holds the old guessed
+> tiers (caps of 400/900/1600 and `token_exponent: 2.0`). Delete it to get the
+> measured ones, or edit it against `cluster.py`'s defaults.
 
 ## Habrók is deliberately absent
 
